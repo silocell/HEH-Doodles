@@ -79,9 +79,16 @@ h1{margin:0 0 4px} .muted{color:var(--ink-soft);margin:0 0 18px}
     /* Not a canvas game: the packaged Scratch game, in a frame. It keeps
        its own score. */
     fruit:    { name:"Fruit Slash",  icon:"🍉", bg:"#be123c", says:"Slice the fruit - never the bomb.", how:"Swipe with the mouse to slice the fruit - never the bomb.",
-                page:"https://games.civilinitiatives.org/sg-fruit.html" }
+                page:"https://games.civilinitiatives.org/sg-fruit.html" },
+    boba:     { name:"Bubble Tea",   icon:"🧋", bg:"#a0522d", says:"Make the drinks your customers order.", how:"Pick a tea, a topping and ice, then Serve - before they lose patience. Keys: 1-4 tea, Q W E topping, I ice, Enter serve." },
+    hop:      { name:"Hop Runner",   icon:"🦊", bg:"#d9480f", says:"Jump the hedges. How far can you run?", how:"Space, the up arrow or a tap to jump. Don't bonk a hedge." },
+    float:    { name:"Bubble Float", icon:"🫧", bg:"#1c7ed6", says:"Tap to float through the gaps.", how:"Tap or press Space to float up. Don't touch the walls." },
+    ttt:      { name:"Noughts & Crosses", icon:"⭕", bg:"#495057", says:"Beat the computer - again and again.", how:"Tap a square (or arrows + Enter, or keys 1-9). How many can you win in a row?" },
+    mines:    { name:"Bomb Squad",   icon:"💣", bg:"#364fc7", says:"Open every square that isn't a bomb.", how:"Tap to open. Hold, right-click or turn on flag mode (top right) to flag a bomb. Numbers say how many bombs touch that square." },
+    stack:    { name:"Tower Stack",  icon:"🏗️", bg:"#e67700", says:"Drop each block right on top.", how:"Tap or press Space to drop the block. Whatever hangs over the edge falls off." },
+    quick:    { name:"Quick Draw",   icon:"⚡", bg:"#2b8a3e", says:"How fast are your reactions?", how:"Wait for green, then tap or press Space as fast as you can. Five rounds - too early scores nothing." }
   };
-  var ORDER = ["snake", "breakout", "mole", "echo", "katch", "pairs", "fruit"];
+  var ORDER = ["boba", "snake", "hop", "breakout", "float", "mole", "stack", "echo", "katch", "pairs", "mines", "ttt", "quick", "fruit"];
   var overlay = null;
 
   function openGame(which){
@@ -131,7 +138,7 @@ h1{margin:0 0 4px} .muted{color:var(--ink-soft);margin:0 0 18px}
       if (!alive) return;
       if (stopFn) stopFn();
       foot.textContent = g.how; setScore(0);
-      stopFn = ({ snake:snake, breakout:breakout, mole:mole, echo:echo, katch:katch, pairs:pairs }[which])(cv, ctx2, setScore, finish, colour);
+      stopFn = ({ snake:snake, breakout:breakout, mole:mole, echo:echo, katch:katch, pairs:pairs, boba:boba, hop:hop, float:float, ttt:ttt, mines:mines, stack:stack, quick:quick }[which])(cv, ctx2, setScore, finish, colour);
     }
     if (frame) { setTimeout(function(){ frame.focus(); }, 30); return; }
     cv.addEventListener("keydown", function(e){ if (e.key === " " && foot.textContent.indexOf("play again") > 0){ e.preventDefault(); start(); } });
@@ -603,6 +610,446 @@ h1{margin:0 0 4px} .muted{color:var(--ink-soft);margin:0 0 18px}
   }
 
 
+
+  /* ==================================================================
+     More doodles (27 Oct). Same shape as the ones above: each takes
+     (canvas, 2d context, setScore, finish, colour) and returns a
+     function that stops it.
+     ================================================================== */
+
+  /* Where a pointer event landed, in canvas pixels. */
+  function pt(cv, e){
+    var r = cv.getBoundingClientRect();
+    return { x:(e.clientX - r.left) * cv.width / r.width, y:(e.clientY - r.top) * cv.height / r.height };
+  }
+  function rrect(g, x, y, w, h, r){
+    g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+  }
+
+  /* ---------- Bubble Tea: make what the customer orders ---------- */
+  function boba(cv, g, setScore, finish, colour){
+    var TEAS = [
+      { name:"Milk tea",   c:"#c8a27a" }, { name:"Green tea",  c:"#9fcf6b" },
+      { name:"Taro",       c:"#b79ad6" }, { name:"Strawberry", c:"#f29bb2" }
+    ];
+    var TOPS = [
+      { name:"Pearls",  c:"#3b2416" }, { name:"Popping", c:"#f59f00" }, { name:"Jelly", c:"#e8f3a0" }
+    ];
+    var ICE = ["No ice", "Ice"];
+    var score = 0, lives = 3, ends = performance.now() + 60000, done = false, raf = 0;
+    var cup = { tea:-1, top:-1, ice:-1 }, order = null, flash = null, patience = 0;
+    var NAMES = ["Ava", "Leo", "Mia", "Sam", "Zara", "Raj", "Nia", "Tom", "Isla", "Kai", "Priya", "Ben"];
+
+    function newOrder(){
+      order = { tea:Math.floor(Math.random()*4), top:Math.floor(Math.random()*3), ice:Math.floor(Math.random()*2),
+                who:NAMES[Math.floor(Math.random()*NAMES.length)], at:performance.now() };
+      patience = Math.max(7000, 15000 - score * 400);   // they get less patient as you get better
+      cup = { tea:-1, top:-1, ice:-1 };
+    }
+    /* The buttons along the bottom. */
+    var B = [];
+    TEAS.forEach(function(t, i){ B.push({ x:10 + i*96, y:290, w:88, h:40, kind:"tea", i:i, label:t.name, c:t.c }); });
+    TOPS.forEach(function(t, i){ B.push({ x:10 + i*96, y:338, w:88, h:40, kind:"top", i:i, label:t.name, c:t.c }); });
+    B.push({ x:298, y:338, w:42, h:40, kind:"ice", label:"🧊" });
+    B.push({ x:346, y:338, w:44, h:40, kind:"bin", label:"🗑" });
+    B.push({ x:250, y:200, w:140, h:44, kind:"serve", label:"Serve" });
+
+    function serve(){
+      if (cup.tea < 0 || cup.top < 0) { flash = { text:"Not finished!", c:"#e03131", at:performance.now() }; return; }
+      var ice = cup.ice < 0 ? 0 : cup.ice;
+      if (cup.tea === order.tea && cup.top === order.top && ice === order.ice) {
+        score++; setScore(score);
+        flash = { text:"Thank you! 😊", c:"#2f9e44", at:performance.now() };
+      } else {
+        lives--; flash = { text:"That's not my order 😕", c:"#e03131", at:performance.now() };
+      }
+      newOrder();
+    }
+    function press(b){
+      if (done) return;
+      if (b.kind === "tea") cup.tea = b.i;
+      else if (b.kind === "top") { if (cup.tea < 0) { flash = { text:"Tea first!", c:"#e03131", at:performance.now() }; return; } cup.top = b.i; }
+      else if (b.kind === "ice") cup.ice = cup.ice === 1 ? 0 : 1;
+      else if (b.kind === "bin") cup = { tea:-1, top:-1, ice:-1 };
+      else if (b.kind === "serve") serve();
+    }
+    function click(e){
+      var p = pt(cv, e);
+      B.forEach(function(b){ if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) press(b); });
+    }
+    function kd(e){
+      if (done) return;
+      var k = e.key;
+      if (k >= "1" && k <= "4") { press(B[+k - 1]); e.preventDefault(); }
+      else if (k === "q" || k === "w" || k === "e") press(B[4 + "qwe".indexOf(k)]);
+      else if (k === "i") press(B[7]);
+      else if (k === "Backspace") { press(B[8]); e.preventDefault(); }
+      else if (k === "Enter") { press(B[9]); e.preventDefault(); }
+    }
+    cv.addEventListener("pointerdown", click);
+    cv.addEventListener("keydown", kd);
+
+    function drawCup(x, y, s, c){
+      /* c = {tea, top, ice}; s = scale */
+      g.save(); g.translate(x, y); g.scale(s, s);
+      g.beginPath(); g.moveTo(-34, -60); g.lineTo(34, -60); g.lineTo(26, 40); g.lineTo(-26, 40); g.closePath();
+      g.fillStyle = "rgba(255,255,255,.55)"; g.fill();
+      if (c.tea >= 0) {
+        g.save(); g.clip();
+        g.fillStyle = TEAS[c.tea].c; g.fillRect(-40, -44, 80, 90);
+        if (c.ice === 1) { g.fillStyle = "rgba(255,255,255,.7)";
+          [[-14,-34],[8,-28],[-4,-16],[16,-10]].forEach(function(q){ rrect(g, q[0], q[1], 13, 13, 3); g.fill(); }); }
+        if (c.top >= 0) { g.fillStyle = TOPS[c.top].c;
+          for (var i = 0; i < 14; i++) { var bx = -22 + (i % 7) * 7.5, by = 32 - Math.floor(i / 7) * 8;
+            g.beginPath(); if (c.top === 2) g.rect(bx - 3, by - 3, 7, 6); else g.arc(bx, by, 3.6, 0, 7); g.fill(); } }
+        g.restore();
+      }
+      g.strokeStyle = colour("--ink"); g.lineWidth = 2.5; g.stroke();
+      g.fillStyle = "#c92a2a"; g.fillRect(6, -84, 6, 30);                     // straw
+      g.fillStyle = colour("--ink"); rrect(g, -38, -64, 76, 6, 3); g.fill(); // lid
+      g.restore();
+    }
+    function draw(now){
+      g.fillStyle = colour("--paper"); g.fillRect(0, 0, 400, 400);
+      var ink = colour("--ink");
+      /* The customer and the order. */
+      g.font = "34px system-ui"; g.textAlign = "center"; g.fillText("🧑", 40, 64);
+      g.fillStyle = "#fff"; rrect(g, 70, 18, 170, 92, 12); g.fill(); g.strokeStyle = "#ccc"; g.lineWidth = 1; g.stroke();
+      g.fillStyle = "#222"; g.textAlign = "left"; g.font = "bold 14px system-ui";
+      g.fillText(order.who + " wants:", 82, 40);
+      g.font = "14px system-ui";
+      g.fillText(TEAS[order.tea].name, 82, 60); g.fillText("with " + TOPS[order.top].name, 82, 78); g.fillText(ICE[order.ice], 82, 96);
+      drawCup(285, 90, .6, order);
+      /* Patience bar. */
+      var left = Math.max(0, 1 - (now - order.at) / patience);
+      g.fillStyle = "rgba(0,0,0,.12)"; g.fillRect(70, 116, 170, 6);
+      g.fillStyle = left > .35 ? "#2f9e44" : "#e03131"; g.fillRect(70, 116, 170 * left, 6);
+      /* Your cup. */
+      g.fillStyle = ink; g.font = "bold 13px system-ui"; g.textAlign = "center"; g.fillText("Your cup", 120, 150);
+      drawCup(120, 230, .85, cup);
+      /* Buttons. */
+      B.forEach(function(b){
+        var on = (b.kind === "tea" && cup.tea === b.i) || (b.kind === "top" && cup.top === b.i) || (b.kind === "ice" && cup.ice === 1);
+        g.fillStyle = b.kind === "serve" ? "#e8590c" : (b.c || "rgba(127,127,127,.18)");
+        rrect(g, b.x, b.y, b.w, b.h, 10); g.fill();
+        if (on) { g.strokeStyle = ink; g.lineWidth = 3; g.stroke(); }
+        g.fillStyle = b.kind === "serve" ? "#fff" : (b.kind === "top" && b.i === 0 ? "#fff" : "#222");
+        g.font = (b.kind === "serve" ? "bold 18px" : "bold 12px") + " system-ui";
+        g.fillText(b.label, b.x + b.w/2, b.y + b.h/2 + 5);
+      });
+      /* Time, lives, message. */
+      g.fillStyle = ink; g.font = "bold 14px system-ui"; g.textAlign = "right";
+      g.fillText(Math.max(0, Math.ceil((ends - now) / 1000)) + "s", 390, 30);
+      g.fillText("❤".repeat(Math.max(0, lives)), 390, 52);
+      if (flash && now - flash.at < 1200) { g.textAlign = "center"; g.fillStyle = flash.c; g.font = "bold 16px system-ui"; g.fillText(flash.text, 320, 180); }
+      g.textAlign = "left";
+    }
+    function frame(now){
+      if (done) return;
+      if (now - order.at > patience) { lives--; flash = { text:order.who + " gave up 😞", c:"#e03131", at:now }; newOrder(); }
+      draw(now);
+      if (lives <= 0 || now > ends) {
+        done = true; draw(now);
+        finish(score, (lives <= 0 ? "Out of hearts - " : "Closing time! ") + score + (score === 1 ? " drink" : " drinks") + " served.");
+        return;
+      }
+      raf = requestAnimationFrame(frame);
+    }
+    newOrder();
+    raf = requestAnimationFrame(frame);
+    return function(){ done = true; cancelAnimationFrame(raf); cv.removeEventListener("pointerdown", click); cv.removeEventListener("keydown", kd); };
+  }
+
+  /* ---------- Hop Runner: jump the hedges ---------- */
+  function hop(cv, g, setScore, finish, colour){
+    var GROUND = 320, y = 0, vy = 0, obs = [], speed = 4.2, dist = 0, next = 60, done = false, raf = 0, last = 0;
+    function jump(){ if (!done && y === 0) vy = 11.5; }
+    function kd(e){ if (e.key === " " || e.key === "ArrowUp" || e.key === "w") { e.preventDefault(); jump(); } }
+    function pd(){ jump(); }
+    cv.addEventListener("keydown", kd); cv.addEventListener("pointerdown", pd);
+    function draw(){
+      g.fillStyle = colour("--paper"); g.fillRect(0, 0, 400, 400);
+      var ink = colour("--ink");
+      g.fillStyle = "rgba(127,127,127,.25)"; g.fillRect(0, GROUND, 400, 2);
+      for (var i = 0; i < 8; i++) { var gx = ((i * 60 - dist * 1.0) % 420 + 420) % 420 - 10; g.fillRect(gx, GROUND + 14, 14, 2); }
+      g.font = "34px system-ui"; g.textAlign = "center"; g.fillText("🦊", 70, GROUND - y - 4);
+      obs.forEach(function(o){ g.fillStyle = "#2f9e44"; rrect(g, o.x, GROUND - o.h, o.w, o.h, 6); g.fill();
+        g.fillStyle = "#237032"; g.fillRect(o.x + 3, GROUND - o.h + 6, o.w - 6, 3); });
+      g.fillStyle = ink; g.textAlign = "right"; g.font = "bold 14px system-ui";
+      g.fillText(Math.floor(dist / 10) + "", 390, 28); g.textAlign = "left";
+    }
+    function frame(now){
+      if (done) return;
+      var k = last ? Math.min(2, (now - last) / 16.7) : 1; last = now;
+      dist += speed * k; speed += 0.0016 * k;
+      vy -= 0.6 * k; y = Math.max(0, y + vy * k); if (y === 0) vy = 0;
+      if ((next -= speed * k) <= 0) {
+        obs.push({ x:410, w:18 + Math.random() * 16, h:22 + Math.random() * 26 });
+        next = 170 + Math.random() * 200;
+      }
+      obs.forEach(function(o){ o.x -= speed * k; });
+      obs = obs.filter(function(o){ return o.x > -40; });
+      setScore(Math.floor(dist / 10));
+      var hit = obs.some(function(o){ return o.x < 84 && o.x + o.w > 56 && y < o.h - 4; });
+      draw();
+      if (hit) { done = true; var s = Math.floor(dist / 10); finish(s, "Bonk! You ran " + s + "."); return; }
+      raf = requestAnimationFrame(frame);
+    }
+    raf = requestAnimationFrame(frame);
+    return function(){ done = true; cancelAnimationFrame(raf); cv.removeEventListener("keydown", kd); cv.removeEventListener("pointerdown", pd); };
+  }
+
+  /* ---------- Bubble Float: tap to rise through the gaps ---------- */
+  function float(cv, g, setScore, finish, colour){
+    var by = 200, vy = 0, walls = [], score = 0, done = false, raf = 0, started = false, last = 0, next = 0;
+    function up(){ if (done) return; started = true; vy = -6.6; }
+    function kd(e){ if (e.key === " " || e.key === "ArrowUp" || e.key === "w") { e.preventDefault(); up(); } }
+    function pd(){ up(); }
+    cv.addEventListener("keydown", kd); cv.addEventListener("pointerdown", pd);
+    function draw(){
+      g.fillStyle = colour("--paper"); g.fillRect(0, 0, 400, 400);
+      walls.forEach(function(w){
+        g.fillStyle = "#4dabf7";
+        rrect(g, w.x, -10, 46, w.gap - 10, 8); g.fill();
+        rrect(g, w.x, w.gap + 120, 46, 400, 8); g.fill();
+      });
+      g.beginPath(); g.arc(100, by, 14, 0, 7); g.fillStyle = "rgba(116,192,252,.35)"; g.fill();
+      g.strokeStyle = "#1c7ed6"; g.lineWidth = 2; g.stroke();
+      g.beginPath(); g.arc(95, by - 5, 4, 0, 7); g.fillStyle = "rgba(255,255,255,.9)"; g.fill();
+      g.fillStyle = colour("--ink"); g.font = "bold 22px system-ui"; g.textAlign = "center";
+      g.fillText(score, 200, 40);
+      if (!started) { g.font = "15px system-ui"; g.fillText("Tap or press Space to float", 200, 260); }
+      g.textAlign = "left";
+    }
+    function frame(now){
+      if (done) return;
+      var k = last ? Math.min(2, (now - last) / 16.7) : 1; last = now;
+      if (started) {
+        vy += 0.38 * k; by += vy * k;
+        if ((next -= k) <= 0) { walls.push({ x:410, gap:50 + Math.random() * 200, passed:false }); next = 92; }
+        walls.forEach(function(w){ w.x -= 2.6 * k;
+          if (!w.passed && w.x + 46 < 86) { w.passed = true; score++; setScore(score); } });
+        walls = walls.filter(function(w){ return w.x > -60; });
+      }
+      var hit = by > 386 || by < 14 || walls.some(function(w){
+        return w.x < 112 && w.x + 46 > 88 && (by - 12 < w.gap || by + 12 > w.gap + 120); });
+      draw();
+      if (hit) { done = true; finish(score, "Pop! Through " + score + (score === 1 ? " gap." : " gaps.")); return; }
+      raf = requestAnimationFrame(frame);
+    }
+    raf = requestAnimationFrame(frame);
+    return function(){ done = true; cancelAnimationFrame(raf); cv.removeEventListener("keydown", kd); cv.removeEventListener("pointerdown", pd); };
+  }
+
+  /* ---------- Noughts & Crosses against the computer ----------
+     It plays well but not perfectly (one move in five is a guess), so
+     you can beat it. Score = games won before you lose one. */
+  function ttt(cv, g, setScore, finish, colour){
+    var b, wins = 0, done = false, busy = false, msg = "", timer = null, cur = 4;
+    var LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+    function winner(s){ for (var i = 0; i < 8; i++){ var l = LINES[i]; if (s[l[0]] && s[l[0]] === s[l[1]] && s[l[0]] === s[l[2]]) return s[l[0]]; }
+      return s.indexOf("") < 0 ? "draw" : null; }
+    function best(s, me){
+      var w = winner(s); if (w === "O") return { v:1 }; if (w === "X") return { v:-1 }; if (w === "draw") return { v:0 };
+      var out = { v: me === "O" ? -2 : 2, m:-1 };
+      for (var i = 0; i < 9; i++) if (!s[i]) {
+        s[i] = me; var r = best(s, me === "O" ? "X" : "O"); s[i] = "";
+        if ((me === "O" && r.v > out.v) || (me === "X" && r.v < out.v)) out = { v:r.v, m:i };
+      }
+      return out;
+    }
+    function fresh(){ b = ["", "", "", "", "", "", "", "", ""]; busy = false; msg = "You're X - your go"; draw(); }
+    function end(w){
+      if (w === "X") { wins++; setScore(wins); msg = "You win! Next game..."; }
+      else if (w === "draw") msg = "A draw. Next game...";
+      else { done = true; draw(); finish(wins, "The computer won. You won " + wins + (wins === 1 ? " game" : " games") + " in a row."); return; }
+      draw(); busy = true; timer = setTimeout(fresh, 1100);
+    }
+    function play(i){
+      if (done || busy || b[i]) return;
+      b[i] = "X"; var w = winner(b); if (w) return end(w);
+      busy = true; msg = "Thinking..."; draw();
+      timer = setTimeout(function(){
+        var free = []; b.forEach(function(v, j){ if (!v) free.push(j); });
+        var m = Math.random() < 0.2 ? free[Math.floor(Math.random() * free.length)] : best(b, "O").m;
+        b[m] = "O"; busy = false; msg = "Your go"; var w2 = winner(b); if (w2) end(w2); else draw();
+      }, 350);
+    }
+    function pd(e){ var p = pt(cv, e); if (p.y < 50 || p.y > 380) return;
+      var c = Math.floor((p.x - 50) / 100), r = Math.floor((p.y - 80) / 100);
+      if (c >= 0 && c < 3 && r >= 0 && r < 3) { cur = r * 3 + c; play(cur); } }
+    function kd(e){
+      var m = { ArrowLeft:-1, ArrowRight:1, ArrowUp:-3, ArrowDown:3 }[e.key];
+      if (m) { e.preventDefault(); var n = cur + m; if (n >= 0 && n < 9 && !(Math.abs(m) === 1 && Math.floor(n / 3) !== Math.floor(cur / 3))) cur = n; draw(); }
+      else if (e.key === "Enter" || (e.key === " " && !done)) { e.preventDefault(); play(cur); }
+      else if (e.key >= "1" && e.key <= "9") play(+e.key - 1);
+    }
+    cv.addEventListener("pointerdown", pd); cv.addEventListener("keydown", kd);
+    function draw(){
+      var ink = colour("--ink");
+      g.fillStyle = colour("--paper"); g.fillRect(0, 0, 400, 400);
+      g.fillStyle = ink; g.font = "bold 16px system-ui"; g.textAlign = "center"; g.fillText(msg, 200, 45);
+      g.strokeStyle = ink; g.lineWidth = 4; g.lineCap = "round"; g.beginPath();
+      [150, 250].forEach(function(v){ g.moveTo(v, 88); g.lineTo(v, 372); }); [180, 280].forEach(function(v){ g.moveTo(58, v); g.lineTo(342, v); }); g.stroke();
+      if (!done && !busy) { g.fillStyle = "rgba(232,89,12,.12)"; g.fillRect(55 + (cur % 3) * 100, 85 + Math.floor(cur / 3) * 100, 90, 90); }
+      b.forEach(function(v, i){
+        var x = 100 + (i % 3) * 100, y = 130 + Math.floor(i / 3) * 100;
+        g.lineWidth = 7;
+        if (v === "X") { g.strokeStyle = "#e8590c"; g.beginPath(); g.moveTo(x - 26, y - 26); g.lineTo(x + 26, y + 26); g.moveTo(x + 26, y - 26); g.lineTo(x - 26, y + 26); g.stroke(); }
+        if (v === "O") { g.strokeStyle = "#1c7ed6"; g.beginPath(); g.arc(x, y, 28, 0, 7); g.stroke(); }
+      });
+      g.textAlign = "left";
+    }
+    fresh();
+    return function(){ done = true; clearTimeout(timer); cv.removeEventListener("pointerdown", pd); cv.removeEventListener("keydown", kd); };
+  }
+
+  /* ---------- Bomb Squad: find every safe square ----------
+     Tap to open, hold (or right-click) to flag. The first square you
+     open is never a bomb. Score = squares opened, plus a time bonus
+     for clearing the board. */
+  function mines(cv, g, setScore, finish, colour){
+    var N = 9, BOMBS = 10, S = 40, OX = 20, OY = 30, cells = [], placed = false, done = false, opened = 0, t0 = 0, held = null, flagMode = false, timer = null;
+    for (var i = 0; i < N*N; i++) cells.push({ bomb:false, open:false, flag:false, n:0 });
+    function around(i, f){ var x = i % N, y = Math.floor(i / N);
+      for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) { if (!dx && !dy) continue;
+        var nx = x + dx, ny = y + dy; if (nx >= 0 && ny >= 0 && nx < N && ny < N) f(ny * N + nx); } }
+    function place(safe){
+      var keep = [safe]; around(safe, function(j){ keep.push(j); });
+      var n = 0; while (n < BOMBS) { var r = Math.floor(Math.random() * N * N);
+        if (!cells[r].bomb && keep.indexOf(r) < 0) { cells[r].bomb = true; n++; } }
+      cells.forEach(function(c, j){ around(j, function(k){ if (cells[k].bomb) c.n++; }); });
+      placed = true; t0 = performance.now();
+    }
+    function open(i){
+      var c = cells[i]; if (c.open || c.flag) return;
+      if (!placed) place(i);
+      c.open = true;
+      if (c.bomb) { done = true; cells.forEach(function(d){ if (d.bomb) d.open = true; }); draw(true);
+        finish(opened, "Boom! You opened " + opened + " safe squares."); return; }
+      opened++; setScore(opened);
+      if (c.n === 0) around(i, function(j){ if (!cells[j].open && !cells[j].bomb) open(j); });
+      if (!done && opened === N*N - BOMBS) {
+        done = true; var secs = Math.round((performance.now() - t0) / 1000), s = opened + Math.max(0, 200 - secs);
+        draw(); finish(s, "Cleared in " + secs + "s! " + s + " points."); }
+    }
+    function at(e){ var p = pt(cv, e), x = Math.floor((p.x - OX) / S), y = Math.floor((p.y - OY) / S);
+      return x >= 0 && y >= 0 && x < N && y < N ? y * N + x : -1; }
+    function flag(i){ if (i >= 0 && !cells[i].open) { cells[i].flag = !cells[i].flag; draw(); } }
+    function pd(e){
+      if (done) return;
+      var p = pt(cv, e);
+      if (p.x > 300 && p.y < 26) { flagMode = !flagMode; draw(); return; }
+      var i = at(e); if (i < 0) return;
+      if (e.button === 2) { flag(i); return; }
+      held = i; timer = setTimeout(function(){ if (held === i) { flag(i); held = null; } }, 420);
+    }
+    function pu(){ if (held == null || done) return; clearTimeout(timer); var i = held; held = null;
+      if (flagMode) flag(i); else { open(i); if (!done) draw(); } }
+    function cm(e){ e.preventDefault(); }
+    cv.addEventListener("pointerdown", pd); cv.addEventListener("pointerup", pu); cv.addEventListener("contextmenu", cm);
+    var NC = ["", "#1c7ed6", "#2f9e44", "#e03131", "#5f3dc4", "#c92a2a", "#0c8599", "#222", "#868e96"];
+    function draw(){
+      var ink = colour("--ink");
+      g.fillStyle = colour("--paper"); g.fillRect(0, 0, 400, 400);
+      g.fillStyle = ink; g.font = "bold 13px system-ui"; g.textAlign = "left";
+      var flags = cells.filter(function(c){ return c.flag; }).length;
+      g.fillText("💣 " + (BOMBS - flags) + " left", 20, 19);
+      g.textAlign = "right"; g.fillText(flagMode ? "🚩 Flag mode: ON" : "🚩 Flag mode: off", 380, 19);
+      g.textAlign = "center";
+      cells.forEach(function(c, i){
+        var x = OX + (i % N) * S, y = OY + Math.floor(i / N) * S;
+        g.fillStyle = c.open ? (c.bomb ? "#ffc9c9" : "rgba(127,127,127,.12)") : "#74c0fc";
+        rrect(g, x + 2, y + 2, S - 4, S - 4, 6); g.fill();
+        g.font = "bold 18px system-ui";
+        if (c.open && c.bomb) g.fillText("💣", x + S/2, y + S/2 + 6);
+        else if (c.open && c.n) { g.fillStyle = NC[c.n]; g.fillText(c.n, x + S/2, y + S/2 + 6); }
+        else if (c.flag) g.fillText("🚩", x + S/2, y + S/2 + 6);
+      });
+      g.textAlign = "left";
+    }
+    draw();
+    return function(){ done = true; clearTimeout(timer); cv.removeEventListener("pointerdown", pd); cv.removeEventListener("pointerup", pu); cv.removeEventListener("contextmenu", cm); };
+  }
+
+  /* ---------- Tower Stack: drop each block on the one below ---------- */
+  function stack(cv, g, setScore, finish, colour){
+    var H = 24, tower = [{ x:120, w:160 }], mv = { x:0, w:160, dir:1 }, speed = 2.4, done = false, raf = 0, last = 0, cut = null;
+    function drop(){
+      if (done) return;
+      var top = tower[tower.length - 1], l = Math.max(mv.x, top.x), r = Math.min(mv.x + mv.w, top.x + top.w);
+      if (r - l <= 0) { done = true; draw(); var s = tower.length - 1; finish(s, "Missed! Your tower was " + s + (s === 1 ? " block" : " blocks") + " high."); return; }
+      cut = { x: mv.x < top.x ? mv.x : r, w: mv.w - (r - l), y: tower.length, a: 1 };
+      if (Math.abs(mv.w - (r - l)) < 3) { l = top.x; r = top.x + top.w; cut = null; }   // near-perfect counts as perfect
+      tower.push({ x:l, w:r - l });
+      setScore(tower.length - 1);
+      speed = Math.min(6, speed + 0.12);
+      mv = { x: tower.length % 2 ? -(r - l) : 400, w: r - l, dir: tower.length % 2 ? 1 : -1 };
+    }
+    function kd(e){ if (e.key === " " || e.key === "Enter" || e.key === "ArrowDown") { e.preventDefault(); drop(); } }
+    function pd(){ drop(); }
+    cv.addEventListener("keydown", kd); cv.addEventListener("pointerdown", pd);
+    function hue(i){ return "hsl(" + ((i * 23) % 360) + ",70%,60%)"; }
+    function draw(){
+      g.fillStyle = colour("--paper"); g.fillRect(0, 0, 400, 400);
+      var shift = Math.max(0, tower.length - 11) * H;
+      tower.forEach(function(b, i){ g.fillStyle = hue(i); g.fillRect(b.x, 390 - (i + 1) * H + shift, b.w, H - 2); });
+      if (cut && cut.a > 0) { g.globalAlpha = cut.a; g.fillStyle = hue(cut.y); g.fillRect(cut.x, 390 - (cut.y + 1) * H + shift + (1 - cut.a) * 80, cut.w, H - 2); g.globalAlpha = 1; }
+      if (!done) { g.fillStyle = hue(tower.length); g.fillRect(mv.x, 390 - (tower.length + 1) * H + shift, mv.w, H - 2); }
+      g.fillStyle = colour("--ink"); g.font = "bold 22px system-ui"; g.textAlign = "center"; g.fillText(tower.length - 1, 200, 36); g.textAlign = "left";
+    }
+    function frame(now){
+      if (done) return;
+      var k = last ? Math.min(2, (now - last) / 16.7) : 1; last = now;
+      mv.x += mv.dir * speed * k;
+      if (mv.x + mv.w > 420 && mv.dir > 0) mv.dir = -1;
+      if (mv.x < -20 && mv.dir < 0) mv.dir = 1;
+      if (cut) cut.a -= 0.03 * k;
+      draw();
+      raf = requestAnimationFrame(frame);
+    }
+    raf = requestAnimationFrame(frame);
+    return function(){ done = true; cancelAnimationFrame(raf); cv.removeEventListener("keydown", kd); cv.removeEventListener("pointerdown", pd); };
+  }
+
+  /* ---------- Quick Draw: how fast are your reactions? ----------
+     Five rounds. Wait for green, then tap. Each round scores up to 500
+     (faster = more); tapping too early scores nothing. */
+  function quick(cv, g, setScore, finish, colour){
+    var round = 0, total = 0, state = "wait", go = 0, timer = null, done = false, times = [], note = "";
+    function arm(){
+      round++; state = "wait"; note = ""; draw();
+      timer = setTimeout(function(){ state = "go"; go = performance.now(); draw(); }, 1300 + Math.random() * 2700);
+    }
+    function hit(){
+      if (done) return;
+      if (state === "wait") { clearTimeout(timer); state = "early"; note = "Too soon! 0 points"; times.push(null); draw(); timer = setTimeout(next, 1100); }
+      else if (state === "go") { var ms = Math.round(performance.now() - go); times.push(ms); total += Math.max(0, 500 - ms); setScore(total);
+        state = "done"; note = ms + " ms"; draw(); timer = setTimeout(next, 1100); }
+    }
+    function next(){
+      if (round >= 5) { done = true; var ok = times.filter(function(t){ return t != null; });
+        var avg = ok.length ? Math.round(ok.reduce(function(a, b){ return a + b; }, 0) / ok.length) : 0;
+        draw(); finish(total, "Done! " + total + " points" + (avg ? ", average " + avg + " ms." : ".")); return; }
+      arm();
+    }
+    function kd(e){ if ((e.key === " " || e.key === "Enter") && !done) { e.preventDefault(); hit(); } }
+    function pd(){ hit(); }
+    cv.addEventListener("keydown", kd); cv.addEventListener("pointerdown", pd);
+    function draw(){
+      g.fillStyle = state === "go" ? "#2f9e44" : state === "early" ? "#e03131" : colour("--paper");
+      g.fillRect(0, 0, 400, 400);
+      g.fillStyle = state === "go" || state === "early" ? "#fff" : colour("--ink");
+      g.textAlign = "center"; g.font = "bold 30px system-ui";
+      g.fillText(state === "go" ? "TAP!" : state === "wait" ? "Wait for green..." : note, 200, 200);
+      g.font = "15px system-ui"; g.fillText("Round " + Math.min(round, 5) + " of 5", 200, 240);
+      g.textAlign = "left";
+    }
+    arm();
+    return function(){ done = true; clearTimeout(timer); cv.removeEventListener("keydown", kd); cv.removeEventListener("pointerdown", pd); };
+  }
+
   /* ---------- the menu ---------- */
   function paint(){
     var host = document.getElementById("picks"); host.textContent = "";
@@ -617,7 +1064,7 @@ h1{margin:0 0 4px} .muted{color:var(--ink-soft);margin:0 0 18px}
     });
   }
   /* Today's doodle: the same one the dashboard used to show. */
-  var keys = ["snake", "breakout", "mole", "echo", "katch", "pairs", "fruit"];
+  var keys = ["snake", "breakout", "mole", "echo", "katch", "pairs", "fruit", "boba", "hop", "float", "ttt", "mines", "stack", "quick"];
   var d = new Date(), n = Math.floor((d.getTime() - d.getTimezoneOffset()*60000) / 86400000);
   var todays = keys[n % keys.length];
   document.getElementById("todayName").textContent = GAMES[todays].name;
