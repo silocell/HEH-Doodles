@@ -91,6 +91,10 @@ h1{margin:0 0 4px} .muted{color:var(--ink-soft);margin:0 0 18px}
   };
   var ORDER = ["boba", "snake", "hop", "breakout", "float", "mole", "stack", "echo", "katch", "pairs", "mines", "ttt", "quick", "fruit"];
   var overlay = null;
+  /* A game shown in the window (Fruit Slash) can ask to be closed by its own ✕. */
+  window.addEventListener("message", function(e){
+    if (e.origin === "https://games.civilinitiatives.org" && e.data && e.data.hl === "close-game" && overlay) overlay.close();
+  });
 
   function openGame(which){
     if (overlay) overlay.close();
